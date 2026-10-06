@@ -1,69 +1,54 @@
 import os
 import cv2
-from torch.utils.data import Dataset
 import numpy as np
+from torch.utils.data import Dataset
 
 
 class MedicalDataSets(Dataset):
-    def __init__(
-            self,
-            base_dir=None,
-            split="train",
-            transform=None,
-            train_file_dir="",
-            val_file_dir="",
-    ):
+    """BUSI loader.
 
-        self._base_dir = base_dir
-        self.sample_list = []
-        self.split = split
+    Expects:
+        <data_root>/images/<case>.png
+        <data_root>/masks/0/<case>_mask.png      (built by prepare_busi.py)
+    and a text file with one case name per line (split_file).
+
+    Boundary GT = 3x3 morphological gradient of the binary mask, computed AFTER
+    augmentation + resize so it always matches the mask the model is trained on.
+    """
+
+    def __init__(self, data_root, split_file, transform=None):
+        self.data_root = data_root
         self.transform = transform
-        self.train_list = []
-        self.semi_list = []
-
-        if self.split == "train":
-            with open(os.path.join(self._base_dir, train_file_dir), "r") as f1:
-
-                self.sample_list = f1.readlines()
-            self.sample_list = [item.replace("\n", "") for item in
-                                self.sample_list]
-
-
-        elif self.split == "val":
-            with open(os.path.join(self._base_dir, val_file_dir), "r") as f:
-                self.sample_list = f.readlines()
-            self.sample_list = [item.replace("\n", "") for item in self.sample_list]
-
-        print("total {}  {} samples".format(len(self.sample_list), self.split))
+        with open(split_file, "r") as f:
+            self.sample_list = [line.strip() for line in f if line.strip()]
+        print("total {} samples from {}".format(len(self.sample_list), split_file))
 
     def __len__(self):
         return len(self.sample_list)
 
     def __getitem__(self, idx):
         case = self.sample_list[idx]
-        image_path = os.path.join(self._base_dir, 'images', case + '.png')
-        image = cv2.imread(os.path.join(self._base_dir, 'images', case + '.png'))
-        label = cv2.imread(os.path.join(self._base_dir, 'masks', '0', case + '_mask.png'), cv2.IMREAD_GRAYSCALE)[
-            ..., None]
-        kernel = np.ones((3, 3), np.uint8)
-        eroded = cv2.erode(label, kernel, iterations=1)
-        dilated = cv2.dilate(label, kernel, iterations=1)
-        boundary = dilated - eroded
-        boundary = boundary[..., None]
+        image_path = os.path.join(self.data_root, "images", case + ".png")
+        mask_path = os.path.join(self.data_root, "masks", "0", case + "_mask.png")
 
-        augmented = self.transform(image=image, mask=label, boundary=boundary)
-        image = augmented['image']
-        label = augmented['mask']
-        boundary = augmented['boundary']
+        image = cv2.imread(image_path)
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if image is None or mask is None:
+            raise FileNotFoundError("missing image or mask for case: " + case)
+        # BGR -> RGB so the ImageNet mean/std in A.Normalize match the channel order
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        image = image.astype('float32') / 255
-        image = image.transpose(2, 0, 1)
+        out = self.transform(image=image, mask=mask)
+        # A.Normalize already outputs standardized float32 -> do NOT divide by 255 again
+        image = out["image"].astype(np.float32).transpose(2, 0, 1)
+        mask = (out["mask"] > 127).astype(np.uint8)  # (H, W), values {0, 1}
 
-        label = label.astype('float32') / 255
-        label = label.transpose(2, 0, 1)
+        k = np.ones((3, 3), np.uint8)
+        boundary = cv2.dilate(mask, k) - cv2.erode(mask, k)
 
-        boundary = boundary.astype('float32') / 255
-        boundary = boundary.transpose(2, 0, 1)
-
-        sample = {"image": image, "label": label, "boundary": boundary, 'case': case, 'image_path': image_path}
-        return sample
+        return {
+            "image": image,                                   # (3, H, W) float32
+            "label": mask[None].astype(np.float32),           # (1, H, W) {0, 1}
+            "boundary": boundary[None].astype(np.float32),    # (1, H, W) {0, 1}
+            "case": case,
+        }
