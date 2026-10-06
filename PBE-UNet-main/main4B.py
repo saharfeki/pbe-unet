@@ -4,6 +4,7 @@ import json
 import time
 import random
 import argparse
+from pathlib import Path
 import numpy as np
 import torch
 import torch.optim as optim
@@ -14,6 +15,10 @@ from dataloader.dataset import MedicalDataSets
 import utils.losses_boundary as losses
 from utils.metrics import fast_iou_dice, per_image_metrics, summarize
 from network.PBEUNet import PBEUNet
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+DEFAULT_DATA_ROOT = PROJECT_ROOT / "data" / "busi"
 
 
 def seed_torch(seed):
@@ -28,9 +33,12 @@ def seed_torch(seed):
 
 def get_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--data_root", required=True, help="folder with images/ and masks/0/")
-    p.add_argument("--train_list", default="splits/busi_train.txt")
-    p.add_argument("--val_list", default="splits/busi_val.txt")
+    p.add_argument("--data_root", default=str(DEFAULT_DATA_ROOT),
+                   help="BUSI folder containing images/ and masks/0/")
+    p.add_argument("--train_list", default=None,
+                   help="training case-list file (default: <data_root>/busi_train.txt)")
+    p.add_argument("--val_list", default=None,
+                   help="validation case-list file (default: <data_root>/busi_val.txt)")
     p.add_argument("--base_lr", type=float, default=1e-3)   # paper: 0.001
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--epochs", type=int, default=300)
@@ -40,11 +48,25 @@ def get_args():
     p.add_argument("--hd_every", type=int, default=10, help="compute HD95 every N epochs (and at the last)")
     p.add_argument("--out_dir", default="runs/pbeunet_seed41")
     p.add_argument("--resume", action="store_true", help="resume from <out_dir>/last.pth if it exists")
-    return p.parse_args()
+    args = p.parse_args()
+    args.train_list = args.train_list or os.path.join(args.data_root, "busi_train.txt")
+    args.val_list = args.val_list or os.path.join(args.data_root, "busi_val.txt")
+    return args
 
 
 def main():
     args = get_args()
+    for required_dir in (os.path.join(args.data_root, "images"),
+                         os.path.join(args.data_root, "masks", "0")):
+        if not os.path.isdir(required_dir):
+            raise FileNotFoundError(
+                "Dataset folder not found: {}. Set --data_root to the BUSI folder "
+                "containing images/ and masks/0/.".format(required_dir)
+            )
+    for split_file in (args.train_list, args.val_list):
+        if not os.path.isfile(split_file):
+            raise FileNotFoundError("Split list not found: {}".format(split_file))
+
     seed_torch(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(args.out_dir, exist_ok=True)

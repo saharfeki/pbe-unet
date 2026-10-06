@@ -196,7 +196,7 @@ First prepare the images and masks, then make the split files:
   --seed 42
 ```
 
-The current `main4B.py` CLI requires `--data_root`. It accepts the train and validation list **file paths** through `--train_list` and `--val_list`; it does not currently define a `--split_dir` option. Because `makeSplit.py` writes the generated lists into `data/busi/`, pass those actual paths explicitly:
+The `main4B.py` CLI accepts the BUSI folder through `--data_root`, and train and validation list **file paths** through `--train_list` and `--val_list`; it does not define a `--split_dir` option. The defaults are anchored to the project/data folder: `data/busi`, `busi_train.txt`, and `busi_val.txt` (the 70/10/20 split). To select paths explicitly, for example:
 
 ```powershell
 & 'C:\Users\User\AppData\Local\Programs\Python\Python312\python.exe' `
